@@ -1,45 +1,81 @@
 #!/usr/bin/env bash
-# Re-fetch the three upstream tracker lists, merge + dedupe into
+# Re-fetch upstream public-tracker lists, merge + dedupe into
 # trackers_all_in_one.txt, and refresh the stats block in README.md.
 # Run by .github/workflows/update-trackers.yml on a weekly schedule.
+#
+# Resilient by design: a source that is unreachable is skipped with a
+# warning, and the merged list is written only when it clears a minimum
+# count, so a transient outage never wipes the published list.
 set -euo pipefail
+
+# Curated / monitored lists first, broad aggregators last, so the most
+# reliable trackers end up near the top of the file.
+SOURCES=(
+  "https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_all.txt"
+  "https://newtrackon.com/api/stable"
+  "https://cf.trackerslist.com/best.txt"
+  "https://raw.githubusercontent.com/adysec/tracker/main/trackers_best.txt"
+  "https://trackers.run/s/wp_up_hp_hs_v4_v6.txt"
+  "https://cf.trackerslist.com/all.txt"
+  "https://github.itzmx.com/1265578519/OpenTracker/master/tracker.txt"
+  "https://raw.githubusercontent.com/Tunglies/TrackersList/main/all.txt"
+  "https://raw.githubusercontent.com/mrgusux/automatic-trackers/main/all_trackers.txt"
+)
+
+MIN_TRACKERS=50   # safety floor: never overwrite with a near-empty result
+UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+: > "$TMP/raw.txt"
 
-echo "Downloading sources..."
-curl -sfL "https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_all.txt" -o "$TMP/ngosang.txt"
-curl -sfL "https://newtrackon.com/api/stable"                                               -o "$TMP/newtrackon.txt"
-curl -sfL "https://cf.trackerslist.com/best.txt"                                            -o "$TMP/cf_best.txt"
+ok=0
+for url in "${SOURCES[@]}"; do
+  if curl -fsSL --max-time 60 -A "$UA" "$url" >> "$TMP/raw.txt" 2>/dev/null; then
+    printf '\n' >> "$TMP/raw.txt"
+    ok=$((ok + 1))
+    echo "  ok   $url"
+  else
+    echo "  WARN skipped (unreachable): $url" >&2
+  fi
+done
+echo "Fetched ${ok}/${#SOURCES[@]} sources."
 
-echo "Merging and deduplicating..."
-cat "$TMP/ngosang.txt" "$TMP/newtrackon.txt" "$TMP/cf_best.txt" \
-  | tr -d '\r' | sed 's/[[:space:]]*$//' | grep -v '^$' \
-  | awk '!seen[$0]++' > trackers_all_in_one.txt
+# Keep only real tracker URLs, strip CR/trailing whitespace, dedupe (first wins, order kept).
+tr -d '\r' < "$TMP/raw.txt" \
+  | sed 's/[[:space:]]*$//' \
+  | grep -iE '^(udp|https?|wss?)://' \
+  | awk '!seen[$0]++' > "$TMP/merged.txt"
 
-# Skip the rest if the merged list is identical to what is already committed.
+COUNT=$(wc -l < "$TMP/merged.txt" | tr -d '[:space:]')
+if [ "$COUNT" -lt "$MIN_TRACKERS" ]; then
+  echo "ERROR: only ${COUNT} trackers (< ${MIN_TRACKERS}); refusing to overwrite." >&2
+  exit 1
+fi
+mv "$TMP/merged.txt" trackers_all_in_one.txt
+
+# Nothing to do if the list is byte-for-byte what is already committed.
 if git diff --quiet -- trackers_all_in_one.txt 2>/dev/null; then
-  echo "Tracker list unchanged; nothing to do."
+  echo "Tracker list unchanged (${COUNT} trackers); nothing to do."
   exit 0
 fi
 
-TOTAL=$(wc -l < trackers_all_in_one.txt | tr -d '[:space:]')
-UDP=$(grep -c '^udp://'    trackers_all_in_one.txt || true)
-HTTP=$(grep -c '^http://'   trackers_all_in_one.txt || true)
-HTTPS=$(grep -c '^https://' trackers_all_in_one.txt || true)
-WS=$(grep -c '^ws'         trackers_all_in_one.txt || true)
+UDP=$(grep -c '^udp://'     trackers_all_in_one.txt || true)
+HTTP=$(grep -c '^http://'    trackers_all_in_one.txt || true)
+HTTPS=$(grep -c '^https://'  trackers_all_in_one.txt || true)
+WS=$(grep -icE '^wss?://'   trackers_all_in_one.txt || true)
 DATE=$(date -u +%Y-%m-%d)
 
-echo "Updating README stats: ${TOTAL} trackers (${DATE})"
+echo "Updating README stats: ${COUNT} trackers (${DATE})"
 {
-  echo "**${TOTAL} unique trackers** (last updated: **${DATE}** UTC)"
+  echo "**${COUNT} unique trackers** (last updated: **${DATE}** UTC)"
   echo
   echo "| Protocol | Count |"
   echo "|----------|-------|"
   echo "| udp      | ${UDP} |"
   echo "| http     | ${HTTP} |"
   echo "| https    | ${HTTPS} |"
-  echo "| ws (WebSocket) | ${WS} |"
+  echo "| ws / wss | ${WS} |"
 } > "$TMP/block.md"
 
 awk -v f="$TMP/block.md" '
