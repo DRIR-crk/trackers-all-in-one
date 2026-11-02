@@ -13,12 +13,12 @@ Add it to your torrent client to speed up peer discovery for public torrents.
 Both are plain text, one tracker URL per line, duplicates removed.
 
 <!-- stats:start -->
-**1856 trackers** in [`trackers_all_in_one.txt`](trackers_all_in_one.txt) · **366 live-tested** in [`trackers_best.txt`](trackers_best.txt) — last updated **2026-10-27** UTC
+**1874 trackers** in [`trackers_all_in_one.txt`](trackers_all_in_one.txt) · **361 live-tested** in [`trackers_best.txt`](trackers_best.txt) — last updated **2026-11-02** UTC
 
 | List                             | Total | udp | http | https | ws/wss |
 |----------------------------------|-------|-----|------|-------|--------|
-| all (every source)               | 1856 | 555 | 955 | 331 | 15 |
-| best (responded to live probe)   | 366 | 155 | 155 | 56 | 0 |
+| all (every source)               | 1874 | 562 | 962 | 335 | 15 |
+| best (responded to live probe)   | 361 | 150 | 151 | 60 | 0 |
 <!-- stats:end -->
 
 > 🔄 The list is refreshed automatically every week by a [GitHub Actions workflow](.github/workflows/update-trackers.yml) — see **How it was built** below.
